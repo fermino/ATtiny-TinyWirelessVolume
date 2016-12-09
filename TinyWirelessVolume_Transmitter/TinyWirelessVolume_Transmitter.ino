@@ -40,7 +40,7 @@
 		#define RF_REPEAT 3
 
 		// Delay between each message
-		#define RF_DELAY 500
+		#define RF_DELAY 300
 
 	// Shared variables used by the interrupt
 
