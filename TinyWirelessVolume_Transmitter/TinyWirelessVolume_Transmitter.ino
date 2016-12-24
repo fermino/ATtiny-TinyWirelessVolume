@@ -6,9 +6,10 @@
 
 	// RF
 	#include <VirtualWire.h>
-	#include <util/delay.h>
+	//#include <util/delay.h>
 
 	// Rotary Encoder
+	#include <Rotary.h>
 	#include <avr/interrupt.h>;
 
 	#ifndef cbi
@@ -39,14 +40,16 @@
 		// Send the same message x times. In the receiver side, repeated messages are discarded if first byte (MessageID, random) is the same as before
 		#define RF_REPEAT 3
 
-		// Delay between each message
-		#define RF_DELAY 300
+	// The encoder common pin is tied to ground, then, we need to enable the pullup resistors
+
+	#define ENABLE_PULLUPS
 
 	// Shared variables used by the interrupt
 
-	volatile uint8_t LastEncoderRead = 0;
+	volatile Rotary Encoder(ENCODER_PIN_A, ENCODER_PIN_B);
+
 	volatile int16_t EncoderValue = 0;
-	 
+
 	void setup()
 	{
 		// Configure VirtualWire library to work with 433MHz RF module
@@ -58,13 +61,10 @@
 
 		pinMode(ENCODER_BUTTON_PIN, INPUT_PULLUP);
 
-		pinMode(ENCODER_PIN_A, INPUT_PULLUP);
-		pinMode(ENCODER_PIN_B, INPUT_PULLUP);
-
 		// Disable interrupts before configuration
 		cli();
 
-		// Enable Pin Change Interrupts in pins 3 and 4
+		// Enable Pin Change Interrupts in pins 3 and 4, used by the encoder
 
 		sbi(GIMSK, 5);
 
@@ -91,10 +91,7 @@
 			}
 		}
 
-		// Every encoder tick is equel to a +/-4 change in EncoderValue. Some of the pulses are missed
-		// This, plus the delay, avoids sending the message with every encoder change
-
-		if(EncoderValue >= 3 || EncoderValue <= -3)
+		if(EncoderValue != 0)
 		{
 			// Send MessageID (random), encoder change command (0x10) and EncoderValue (int16_t, two 8-bit bytes)
 
@@ -108,9 +105,6 @@
 
 			// Reset Encoder counter to 0
 			EncoderValue = 0;
-
-			// delay() can't be used because VirtualWire
-			_delay_ms(RF_DELAY);
 		}
 	}
 
@@ -130,28 +124,12 @@
 	}
 
 	// Rotary encoder's Interrupt Service Routine (Pin Change Interrupt)
-	// This compares the last encoder read with the curent one to detect if the encoder
-	// rotated clockwise or anticlockwise and then changes EncoderValue
 	ISR(PCINT0_vect)
 	{
-		uint8_t Read = (digitalRead(ENCODER_PIN_A) << 1) | digitalRead(ENCODER_PIN_B);
+		uint8_t Read = Encoder.process();
 
-		switch((LastEncoderRead << 2) | Read)
-		{
-			case 0b1101:
-			case 0b0100:
-			case 0b0010:
-			case 0b1011:
-				EncoderValue++;
-				break;
-
-			case 0b1110:
-			case 0b0111:
-			case 0b0001:
-			case 0b1000:
-				EncoderValue--;
-				break;
-		}
-
-		LastEncoderRead = Read;
+		if(Read == DIR_CW)
+			EncoderValue++;
+		else if(Read == DIR_CCW)
+			EncoderValue--;
 	}
