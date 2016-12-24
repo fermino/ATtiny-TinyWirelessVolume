@@ -35,10 +35,10 @@
 
 		// Most of the times with a lower bitrate the RF module's range is better, but, somehow, with lower speeds it works worse
 		// If it doesn't work, try changing it to a lower value. Don't forget to change it in the receiver side
-		#define RF_BITRATE 2000
+		#define RF_BITRATE 600
 
-		// Send the same message x times. In the receiver side, repeated messages are discarded if first byte (MessageID, random) is the same as before
-		#define RF_REPEAT 3
+		#define RF_PREAMBLE_LENGTH 2
+		#define RF_PREAMBLE 0xaa, 0x55
 
 	// The encoder common pin is tied to ground, then, we need to enable the pullup resistors
 
@@ -82,26 +82,22 @@
 		{
 			// Send MessageID (random) and button press command (0x11)
 
-			char Data[] = {random(255), 0x11};
-
-			for(int i = 0; i < RF_REPEAT; i++)
-			{
-				vw_send((uint8_t*) Data, 2);
-				vw_wait_tx();
-			}
+			char Data[] = {RF_PREAMBLE, random(255), 0x11};
+			vw_send((uint8_t*) Data, RF_PREAMBLE_LENGTH + 2);
 		}
 
-		if(EncoderValue != 0)
+		if(EncoderValue != 0 && !vx_tx_active())
 		{
 			// Send MessageID (random), encoder change command (0x10) and EncoderValue (int16_t, two 8-bit bytes)
 
-			char Data[] = {random(255), 0x10, EncoderValue >> 8, EncoderValue & 0xFF};
+			char Data[] = {RF_PREAMBLE, random(255), 0x10, EncoderValue >> 8, EncoderValue & 0xFF};
 
-			for(int i = 0; i < RF_REPEAT; i++)
-			{
-				vw_send((uint8_t*) Data, 4);
-				vw_wait_tx();
-			}
+			// We'll send it and we'll not wait
+			// The main loop will still be listening for button pulses and, when the tx 
+			// becomes available, and there's something to send, it will send it. 
+			// We can't send the same message twice because if we senda message followed
+			// by another, the library will vw_tx_wait() before sending the second one. 
+			vw_send((uint8_t*) Data, RF_PREAMBLE_LENGTH + 4);
 
 			// Reset Encoder counter to 0
 			EncoderValue = 0;
