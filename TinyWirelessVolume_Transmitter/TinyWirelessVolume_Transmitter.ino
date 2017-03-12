@@ -8,15 +8,21 @@
  * 
  * RF and VirtualWire info: 
  * http://www.lydiard.plus.com/hardware_pages/433mhz_modules.htm
+ * 
+ * nRF24L01 info: 
+ * WHAT, MISO AND MOSI ARE INVERTED?
+ * https://forum.arduino.cc/index.php?topic=413878.msg2849746#msg2849746
+ * 
+ * Add this flag to avr-gcc: -DRANDOM_32b=0x`hexdump -e '"%x"' -n4 /dev/random`
  */
 
-	// RF
-	#include <VirtualWire.h>
-	//#include <util/delay.h>
+	#include "Configuration.h"
 
-	// Rotary Encoder
-	#include <Rotary.h>
-	#include <avr/interrupt.h>;
+	// Encoder lib (based on buxtronix's one)
+	#include <OneWireRotaryEncoder.h>
+
+	// RF
+	#include <RF24.h>
 
 	#ifndef cbi
 		#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
@@ -25,109 +31,104 @@
 		#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 	#endif
 
-	// Rotary encoder configuration
+	OneWireRotaryEncoder<ENCODER_INPUT_PIN> Encoder(ENCODER_R2, ENCODER_RA, ENCODER_RB, ENCODER_RBUTTON, ENCODER_READ_TOLERANCE);
+	int8_t EncoderValue = 0;
+	int16_t EncoderButton_PressedAt = 0;
 
-		#define ENCODER_BUTTON_PIN 0
-
-		#define ENCODER_PIN_A 3
-		#define ENCODER_PIN_B 4
-
-		// Pulse length to be detected as button press
-		#define ENCODER_BUTTON_THRESHOLD 25
-
-	// RF Module configuration
-
-		#define RF_TX_PIN 1
-
-		// Most of the times with a lower bitrate the RF module's range is better
-		// If it doesn't work, try changing it to a lower value. Don't forget to change it in the receiver side
-		#define RF_BITRATE 600
-
-	// The encoder common pin is tied to ground, then, we need to enable the pullup resistors
-	#define ENABLE_PULLUPS
-
-	// Shared variables used by the interrupt
-
-	volatile Rotary Encoder(ENCODER_PIN_A, ENCODER_PIN_B);
-
-	volatile int16_t EncoderValue = 0;
+	// Use pin 5 for Chip-Enable if reset pin is disabled, else, tie CE pin to ground
+	RF24 RF(6, NRF_CSN_PIN);
 
 	void setup()
 	{
-		// Configure VirtualWire library to work with 433MHz RF module
+		// Configure RF module
 
-		vw_set_tx_pin(RF_TX_PIN);
-		vw_setup(RF_BITRATE);
+		RF.begin();
+		RF.setChannel(NRF_CHANNEL);
+		RF.setDataRate(NRF_DATA_RATE);
 
-		// Set encoder's pins as inputs with pullup resistors (encoder is tied to ground)
+		// Disable if there is race conditions
+		RF.setAutoAck(1);
+		RF.setRetries(2, 15);
 
-		pinMode(ENCODER_BUTTON_PIN, INPUT_PULLUP);
-
-		// Disable interrupts before configuration
-		cli();
-
-		// Enable Pin Change Interrupts in pins 3 and 4, used by the encoder
-
-		sbi(GIMSK, 5);
-
-		sbi(PCMSK, 3);
-		sbi(PCMSK, 4);
-
-		// Turn on interrupts
-		sei();
+		RF.openWritingPipe(NRF_WRITING_PIPE);
 	}
 
 	void loop()
 	{
-		// If the pulse is longer than the time threshold
-		if(ReadPulse(ENCODER_BUTTON_PIN) > ENCODER_BUTTON_THRESHOLD)
+		uint8_t EncoderRead = Encoder.process();
+
+		if(EncoderRead == DIR_CW)
+			EncoderValue++;
+		else if(EncoderRead == DIR_CCW)
+			EncoderValue--;
+
+		if(EncoderValue != 0)
 		{
-			// Send MessageID (random) and button press command (0x11)
+			uint8_t Message[2]
+			{
+				0x11,				// Command	=> Relative position move
+				EncoderValue		// Data		=> Relative position
+			};
 
-			char Data[] = {random(255), 0x11};
-			vw_send((uint8_t*) Data, 2);
-		}
+			SendMessage(Message, 2);
 
-		if(EncoderValue != 0 && !vx_tx_active())
-		{
-			// Send MessageID (random), encoder change command (0x10) and EncoderValue (int16_t, two 8-bit bytes)
-
-			char Data[] = {random(255), 0x10, EncoderValue >> 8, EncoderValue & 0xFF};
-
-			// We'll send it and we'll not wait
-			// The main loop will still be listening for button pulses and, when the tx 
-			// becomes available, and there's something to send, it will send it. 
-			// We can't send the same message twice because if we senda message followed
-			// by another, the library will vw_tx_wait() before sending the second one. 
-			vw_send((uint8_t*) Data, 4);
-
-			// Reset Encoder counter to 0
+			// Reset counter to 0
 			EncoderValue = 0;
 		}
+
+		if(Encoder.buttonPressed())
+		{
+			// If -1, the button is disabled until the user releases it
+			if(EncoderButton_PressedAt >= 0)
+			{
+				if(EncoderButton_PressedAt > 0)
+				{
+					if(millis() - EncoderButton_PressedAt >= ENCODER_BUTTON_THRESHOLD)
+					{
+						uint8_t Message[1]
+						{
+							0x12	// Command => Mute
+						};
+						
+						SendMessage(Message, 1);
+
+						EncoderButton_PressedAt = -1;
+
+						delay(ENCODER_BUTTON_DEBOUNCE);
+					}
+				}
+				else
+					EncoderButton_PressedAt = millis();
+			}
+		}
+		else
+			EncoderButton_PressedAt = 0;
 	}
 
-	// Reads a pulse from a pin and returns the time since the press
-	// Returns 0 if the button is not pressed
-	uint16_t ReadPulse(uint8_t Pin)
+	void SendMessage(uint8_t* Data, uint8_t DataLength)
 	{
-		uint16_t Time = 0;
+		if(DataLength > NRF_PACKET_BODY_LENGTH)
+			return;
 
-		while(digitalRead(Pin) == LOW)
+		uint8_t Message[NRF_PACKET_LENGTH];
+
+		// Compilation ID (should be different in each chip)
+		Message[0] = (RANDOM_32b >> 24) & 0xFF;
+		Message[1] = (RANDOM_32b >> 16) & 0xFF;
+		Message[2] = (RANDOM_32b >> 8) & 0xFF;
+		Message[3] = RANDOM_32b & 0xFF;
+
+		// Message ID
+		Message[4] = random(255); // Use millis() ?
+
+		for(uint8_t i = NRF_PACKET_HEADER_LENGTH; i < NRF_PACKET_LENGTH; i++)
 		{
-			Time++;
-			delay(1);
+			if((i - NRF_PACKET_HEADER_LENGTH) < DataLength)
+				Message[i] = Data[i - NRF_PACKET_HEADER_LENGTH];
+			else
+				Message[i] = 0x00;
 		}
 
-		return Time;
-	}
-
-	// Rotary encoder's Interrupt Service Routine (Pin Change Interrupt)
-	ISR(PCINT0_vect)
-	{
-		uint8_t Read = Encoder.process();
-
-		if(Read == DIR_CW)
-			EncoderValue++;
-		else if(Read == DIR_CCW)
-			EncoderValue--;
+		// Non-blocking write
+		RF.startWrite(Message, NRF_PACKET_LENGTH, NRF_MULTICAST);
 	}
