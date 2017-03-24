@@ -18,6 +18,8 @@
 
 	#include "Configuration.h"
 
+	#include <avr/eeprom.h>
+
 	// Encoder lib (based on buxtronix's one)
 	#include <OneWireRotaryEncoder.h>
 
@@ -37,20 +39,28 @@
 
 	// Use pin 5 for Chip-Enable if reset pin is disabled, else, tie CE pin to ground
 	RF24 RF(6, NRF_CSN_PIN);
+	uint8_t RF24WritingPipe[5] = NRF_WRITING_PIPE;
+
+	uint8_t DeviceID[TX_DEVICE_ID_LENGTH];
 
 	void setup()
 	{
+		// Get device's id from eeprom (address 0)
+		// This gets written when the tiny is programmed
+		for(uint8_t Address = 0; Address < TX_DEVICE_ID_LENGTH; Address++)
+			DeviceID[Address] = eeprom_read_byte(Address);
+
 		// Configure RF module
 
 		RF.begin();
 		RF.setChannel(NRF_CHANNEL);
 		RF.setDataRate(NRF_DATA_RATE);
 
-		// Disable if there is race conditions
+		// Disable if there are race conditions
 		RF.setAutoAck(1);
 		RF.setRetries(2, 15);
 
-		RF.openWritingPipe(NRF_WRITING_PIPE);
+		RF.openWritingPipe(RF24WritingPipe);
 	}
 
 	void loop()
@@ -112,11 +122,11 @@
 
 		uint8_t Message[NRF_PACKET_LENGTH];
 
-		// Compilation ID (should be different in each chip)
-		Message[0] = (RANDOM_32b >> 24) & 0xFF;
-		Message[1] = (RANDOM_32b >> 16) & 0xFF;
-		Message[2] = (RANDOM_32b >> 8) & 0xFF;
-		Message[3] = RANDOM_32b & 0xFF;
+		// Device ID (should be different in each chip)
+		Message[0] = DeviceID[0];
+		Message[1] = DeviceID[1];
+		Message[2] = DeviceID[2];
+		Message[3] = DeviceID[3];
 
 		// Message ID
 		Message[4] = random(255); // Use millis() ?

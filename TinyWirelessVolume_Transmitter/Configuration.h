@@ -1,3 +1,6 @@
+
+		#define TX_DEVICE_ID_LENGTH 4
+
 	/**
 	 * Interface
 	 */
@@ -32,12 +35,12 @@
 		#define NRF_CHANNEL 76 
 		#define NRF_DATA_RATE RF24_250KBPS
 
-		#define NRF_PACKET_HEADER_LENGTH (4 + 1)
+		#define NRF_PACKET_HEADER_LENGTH (TX_DEVICE_ID_LENGTH + 1)
 		#define NRF_PACKET_BODY_LENGTH 5
 		#define NRF_PACKET_LENGTH (NRF_PACKET_HEADER_LENGTH + NRF_PACKET_BODY_LENGTH)
 
 		// Request ACK or not?
 		#define NRF_MULTICAST false
-
-		// "TWV00"
-		#define NRF_WRITING_PIPE 0x5457563030LL
+		
+		// Project0, Project1, Project2, API version, Channel number (0 for any to master, 1 for master to any)
+		#define NRF_WRITING_PIPE {'T', 'W', 'V', 0, 0}
