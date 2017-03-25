@@ -5,15 +5,16 @@
 	 * Interface
 	 */
 		
-		#define ENCODER_BUTTON_THRESHOLD 100
-		#define ENCODER_BUTTON_DEBOUNCE 10
+		#define ENCODER_BUTTON_MUTE_THRESHOLD 100
+
+		#define ENCODER_BUTTON_RESET_THRESHOLD 4000
 	
 	/**
 	 * Encoder hardware configuration
 	 */
 		#define ENCODER_INPUT_PIN A3
 
-		#define ENCODER_READ_TOLERANCE 25
+		#define ENCODER_READ_TOLERANCE 40
 
 		#define ENCODER_RA 10000 /* 21k */
 		#define ENCODER_RB 20000 /* 10k5 */

@@ -16,6 +16,8 @@
  * Add this flag to avr-gcc: -DRANDOM_32b=0x`hexdump -e '"%x"' -n4 /dev/random`
  */
 
+	#include <avr/wdt.h>
+
 	#include "Configuration.h"
 
 	#include <avr/eeprom.h>
@@ -35,7 +37,9 @@
 
 	OneWireRotaryEncoder<ENCODER_INPUT_PIN> Encoder(ENCODER_R2, ENCODER_RA, ENCODER_RB, ENCODER_RBUTTON, ENCODER_READ_TOLERANCE);
 	int8_t EncoderValue = 0;
-	int16_t EncoderButton_PressedAt = 0;
+	uint16_t EncoderButton_PressedAt = 0;
+
+	bool MuteSent = false;
 
 	// Use pin 5 for Chip-Enable if reset pin is disabled, else, tie CE pin to ground
 	RF24 RF(6, NRF_CSN_PIN);
@@ -45,6 +49,10 @@
 
 	void setup()
 	{
+		// Disable the watchdog
+		MCUSR = 0;
+		wdt_disable();
+
 		// Get device's id from eeprom (address 0)
 		// This gets written when the tiny is programmed
 		for(uint8_t Address = 0; Address < TX_DEVICE_ID_LENGTH; Address++)
@@ -61,6 +69,15 @@
 		RF.setRetries(2, 15);
 
 		RF.openWritingPipe(RF24WritingPipe);
+
+		// Send notice to master on startup
+
+		uint8_t StartUpMessage[1]
+		{
+			0xff	// Command => Start up notice
+		};
+
+		SendMessage(StartUpMessage, 1);
 	}
 
 	void loop()
@@ -86,29 +103,34 @@
 			EncoderValue = 0;
 		}
 
+		// The button will be disabled until the user releases it
 		if(Encoder.buttonPressed())
 		{
-			// If -1, the button is disabled until the user releases it
-			if(EncoderButton_PressedAt >= 0)
+			if(EncoderButton_PressedAt > 0)
 			{
-				if(EncoderButton_PressedAt > 0)
+				if(millis() - EncoderButton_PressedAt >= ENCODER_BUTTON_MUTE_THRESHOLD && !MuteSent)
 				{
-					if(millis() - EncoderButton_PressedAt >= ENCODER_BUTTON_THRESHOLD)
+					uint8_t Message[1]
 					{
-						uint8_t Message[1]
-						{
-							0x12	// Command => Mute
-						};
-						
-						SendMessage(Message, 1);
+						0x12	// Command => Mute
+					};
+					
+					SendMessage(Message, 1);
 
-						EncoderButton_PressedAt = -1;
-
-						delay(ENCODER_BUTTON_DEBOUNCE);
-					}
+					MuteSent = true;
 				}
-				else
-					EncoderButton_PressedAt = millis();
+				else if(millis() - EncoderButton_PressedAt >= ENCODER_BUTTON_RESET_THRESHOLD)
+				{
+					// Reset the MCU
+					wdt_enable(WDTO_1S);
+					for(;;);
+				}
+			}
+			else
+			{
+				EncoderButton_PressedAt = millis();
+				
+				MuteSent = false;
 			}
 		}
 		else
